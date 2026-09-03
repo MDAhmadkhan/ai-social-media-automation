@@ -92,6 +92,51 @@ class AIService:
         )
         return await self.generate_for_content(owner_id, str(content.id), platforms, generate_images)
 
+    async def generate_topic_pack(self, owner_id: str, topic: str, platforms: list[Platform], count: int = 10) -> list[GeneratedPost]:
+        clean_topic = " ".join(topic.split())
+        if len(clean_topic) < 3:
+            raise ValueError("Write a niche or post topic first.")
+        allowed_platforms = [platform for platform in platforms if platform in {Platform.facebook, Platform.instagram}]
+        if not allowed_platforms:
+            raise ValueError("Choose Facebook, Instagram, or both.")
+        brand = await self.repos.brand_settings.find_one({"owner_id": owner_id})
+        if not brand:
+            raise ValueError("Brand settings were not found")
+        ideas = self._topic_post_ideas(clean_topic, min(max(count, 1), 10))
+        posts: list[GeneratedPost] = []
+        for index, idea in enumerate(ideas, start=1):
+            slug = quote(re.sub(r"[^a-z0-9]+", "-", f"{clean_topic}-{index}".lower()).strip("-") or f"topic-post-{index}")
+            raw_text = f"{idea['hook']} {idea['body']} {idea['cta']}"
+            content = await self.repos.content_items.create(
+                {
+                    "owner_id": owner_id,
+                    "website_id": "topic-pack",
+                    "canonical_url": f"https://local.prompt/{slug}",
+                    "title": idea["title"],
+                    "meta_description": self._sentence(raw_text, 180),
+                    "keywords": self._topic_keywords(clean_topic),
+                    "raw_text": raw_text,
+                    "source_hash": hashlib.sha256(f"{clean_topic}:{index}:{raw_text}".encode()).hexdigest(),
+                    "generated_assets": {"source": "topic-pack"},
+                }
+            )
+            for platform in allowed_platforms:
+                posts.append(
+                    await self.repos.generated_posts.create(
+                        {
+                            "owner_id": owner_id,
+                            "content_item_id": str(content.id),
+                            "platform": platform,
+                            "text": self._topic_post_text(platform, idea, clean_topic),
+                            "hashtags": self._topic_hashtags(platform, clean_topic, brand.hashtag_count),
+                            "cta": idea["cta"],
+                            "image_urls": [],
+                            "status": "draft",
+                        }
+                    )
+                )
+        return posts
+
     async def _generate_images(self, content: ContentItem, bundle: dict[str, Any]) -> list[str]:
         image_service = ImageService()
         prompts = [
@@ -157,6 +202,54 @@ class AIService:
             "quote_card_text": f"Try {tool_name} online",
             "posts": posts,
         }
+
+    def _topic_post_ideas(self, topic: str, count: int) -> list[dict[str, str]]:
+        angles = [
+            ("Problem", "Most people struggle with {topic} because they try to do everything at once.", "Start with one small step today."),
+            ("Quick Tip", "Here is a simple way to improve your {topic} results without overcomplicating the process.", "Save this for later."),
+            ("Mistake", "A common {topic} mistake is focusing on speed before clarity.", "Fix this before your next post."),
+            ("Checklist", "Before you publish anything about {topic}, check your headline, message, offer, and next step.", "Use this as your quick checklist."),
+            ("Story", "Every strong {topic} result starts with understanding what your audience actually needs.", "Share this with someone building the same thing."),
+            ("Myth", "You do not need a huge budget to make progress with {topic}; you need consistency and useful content.", "Try this approach this week."),
+            ("How To", "Break {topic} into small actions: plan the idea, write the message, add proof, then publish.", "Follow for more practical tips."),
+            ("Benefits", "Good {topic} content builds trust, answers questions, and helps people take action faster.", "DM us if you want help getting started."),
+            ("Comparison", "Random posting creates noise. Planned {topic} content creates momentum.", "Choose one clear goal for your next post."),
+            ("Reminder", "Your audience does not need perfect content about {topic}; they need helpful content they can use.", "Post something useful today."),
+        ]
+        return [
+            {
+                "title": f"{label}: {topic}",
+                "hook": label,
+                "body": body.format(topic=topic),
+                "cta": cta,
+            }
+            for label, body, cta in angles[:count]
+        ]
+
+    def _topic_post_text(self, platform: Platform, idea: dict[str, str], topic: str) -> str:
+        if platform == Platform.instagram:
+            return (
+                f"{idea['hook']} for {topic}\n\n"
+                f"{idea['body']}\n\n"
+                f"{idea['cta']}"
+            )
+        return (
+            f"{idea['hook']}: {topic}\n\n"
+            f"{idea['body']}\n\n"
+            f"{idea['cta']}"
+        )
+
+    def _topic_keywords(self, topic: str) -> list[str]:
+        words = [word.lower() for word in re.findall(r"[A-Za-z0-9]+", topic) if len(word) > 2]
+        return list(dict.fromkeys(words))[:8]
+
+    def _topic_hashtags(self, platform: Platform, topic: str, limit: int) -> list[str]:
+        base = self._topic_keywords(topic)
+        generic = ["SocialMedia", "ContentMarketing", "DigitalMarketing", "SmallBusiness", "GrowthTips"]
+        if platform == Platform.instagram:
+            generic = ["InstagramTips", "ReelsIdeas", "ContentCreator", "InstaGrowth", "SocialMediaTips"]
+        tags = [*base, *generic]
+        return self._normalize_hashtags(tags, max(6, min(limit or 8, 12)))
 
     def _sentence(self, text: str, limit: int) -> str:
         clean = " ".join(text.split())

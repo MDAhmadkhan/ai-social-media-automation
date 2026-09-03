@@ -5,7 +5,7 @@ from app.core.deps import get_current_user, get_repositories, require_roles
 from app.models.domain import User
 from app.models.enums import UserRole
 from app.repositories.factory import Repositories
-from app.schemas.common import BulkGenerateRequest, GenerateRequest, PromptGenerateRequest
+from app.schemas.common import BulkGenerateRequest, GenerateRequest, PromptGenerateRequest, TopicBulkGenerateRequest
 from app.services.ai.ai_service import AIService
 
 router = APIRouter()
@@ -47,6 +47,21 @@ async def generate_from_prompt(
     except Exception as exc:
         logger.exception("prompt_generation_failed", user_id=str(user.id))
         raise HTTPException(status_code=500, detail="Prompt generation failed unexpectedly. Check backend logs for details.") from exc
+
+
+@router.post("/generate-topic-pack")
+async def generate_topic_pack(
+    payload: TopicBulkGenerateRequest,
+    user: User = Depends(require_roles(UserRole.admin, UserRole.manager, UserRole.editor)),
+    repos: Repositories = Depends(get_repositories),
+):
+    try:
+        return await AIService(repos).generate_topic_pack(str(user.id), payload.topic, payload.platforms, payload.count)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("topic_pack_generation_failed", user_id=str(user.id))
+        raise HTTPException(status_code=500, detail="Topic pack generation failed unexpectedly. Check backend logs for details.") from exc
 
 
 @router.get("/generated-posts")

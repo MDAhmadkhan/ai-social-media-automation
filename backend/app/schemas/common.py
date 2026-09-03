@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, EmailStr, HttpUrl
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl
 
 from app.models.enums import Language, Platform, PostStatus, ScheduleMode, Tone, UserRole, WebsiteType
 
@@ -100,6 +100,12 @@ class PromptGenerateRequest(BaseModel):
     platforms: list[Platform]
     generate_images: bool = False
     image_prompt: str | None = None
+
+
+class TopicBulkGenerateRequest(BaseModel):
+    topic: str
+    platforms: list[Platform] = Field(default_factory=lambda: [Platform.facebook, Platform.instagram])
+    count: int = 10
 
 
 class BulkGenerateRequest(BaseModel):
